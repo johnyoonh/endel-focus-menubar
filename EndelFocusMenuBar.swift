@@ -184,7 +184,8 @@ private struct TaskForgeTask {
 }
 
 private final class TaskForgeStore {
-    static let wikiPath = "/Users/john/Library/Mobile Documents/iCloud~md~obsidian/Documents/wiki"
+    static let wikiPath = ProcessInfo.processInfo.environment["TASKFORGE_WIKI_PATH"]
+        ?? "\(NSHomeDirectory())/Documents/wiki"
     static let tasksURL = URL(fileURLWithPath: "\(wikiPath)/10_journal/TaskForge")
     static let pomodoroLogURL = URL(fileURLWithPath: "\(wikiPath)/99_meta/tasks/pomodoro-sessions.jsonl")
     static let impromptuTasksURL = URL(fileURLWithPath: "\(wikiPath)/10_journal/TaskForge/inbox.md")

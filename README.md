@@ -53,7 +53,7 @@ The global shortcut `Ctrl+Option+Command+F` opens the TaskForge picker when no s
 Completed focus rounds are appended to:
 
 ```text
-~/Library/Mobile Documents/iCloud~md~obsidian/Documents/wiki/99_meta/tasks/pomodoro-sessions.jsonl
+${TASKFORGE_WIKI_PATH:-~/Documents/wiki}/99_meta/tasks/pomodoro-sessions.jsonl
 ```
 
 Builds are signed with the available Apple Development identity when present. After switching from the earlier ad-hoc signature, macOS may ask you to add Accessibility permission once more; future rebuilds should keep the same signing identity.
