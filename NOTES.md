@@ -15,6 +15,7 @@ Current behavior:
 - When both Flow/task end time and due time exist, the earlier `HH:MM` is shown.
 - Starting a selected TaskForge task marks its line with `[status:: In Progress]`.
 - Completed focus rounds append JSONL records to `99_meta/tasks/pomodoro-sessions.jsonl`.
+- `scripts/transition_scheduler.py` scores open TaskForge tasks plus linked TaskNotes for ride, airport, and in-flight work windows. It can emit JSON/ICS or import private calendar blocks with `gcalcli`.
 - `Ctrl+Option+Command+F` opens the picker when idle; when a session is assigned, it pauses Flow and opens the menu-bar menu.
 
 `build_app.sh` now rebuilds, signs, kills the old menu-bar instance, and launches the rebuilt app automatically.

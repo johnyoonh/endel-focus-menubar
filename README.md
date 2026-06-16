@@ -56,4 +56,12 @@ Completed focus rounds are appended to:
 ${TASKFORGE_WIKI_PATH:-~/Documents/wiki}/99_meta/tasks/pomodoro-sessions.jsonl
 ```
 
+Plan travel transition work blocks with:
+
+```sh
+uv run python scripts/transition_scheduler.py --wiki-path "$TASKFORGE_WIKI_PATH"
+```
+
+The scheduler reads open TaskForge tasks and linked TaskNotes, scores them against ride, airport, and in-flight windows, and prints JSON proposals. Use `--apply --calendar Gmail` to import high-confidence blocks through `gcalcli` as private ICS events. Pass `--windows-json path/to/windows.json` to plan a different trip.
+
 Builds are signed with the available Apple Development identity when present. After switching from the earlier ad-hoc signature, macOS may ask you to add Accessibility permission once more; future rebuilds should keep the same signing identity.
