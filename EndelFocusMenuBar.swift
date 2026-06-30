@@ -856,7 +856,7 @@ private final class SortableTaskHeaderView: NSTableHeaderView {
 private final class PromptController: NSWindowController, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate {
     private static let evaluationTimeoutSeconds = 45.0
     private static let urgencyColumnSample = "23:59"
-    private static let priorityColumnTitle = "Priority"
+    private static let priorityColumnTitle = "Pri"
     private let queryField = NSTextField(string: "")
     private let tableView = NSTableView()
     private let taskField = NSTextField(string: "")
