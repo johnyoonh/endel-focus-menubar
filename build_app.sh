@@ -64,7 +64,7 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
-SIGNING_IDENTITY="$(/usr/bin/security find-identity -v -p codesigning 2>/dev/null | /usr/bin/awk -F '\"' '/Apple Development/ { print $2; exit }')"
+SIGNING_IDENTITY="$(/usr/bin/security find-identity -v -p codesigning 2>/dev/null | /usr/bin/awk '/Apple Development/ { print $2; exit }')"
 if [ -n "$SIGNING_IDENTITY" ]; then
   /usr/bin/codesign --force --sign "$SIGNING_IDENTITY" "$APP_DIR" >/dev/null
 else

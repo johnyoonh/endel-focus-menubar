@@ -170,6 +170,11 @@ private struct TaskForgeTask {
         return "-"
     }
 
+    var priorityLabel: String {
+        guard let schedulerRank else { return "-" }
+        return "#\(schedulerRank)"
+    }
+
     var isScheduledToday: Bool {
         scheduled == TaskForgeStore.localTodayString()
     }
@@ -437,8 +442,8 @@ private final class TaskForgeStore {
     }
 
     private static func rankKey(filePath: String, lineNumber: Int) -> String {
-        let prefix = URL(fileURLWithPath: wikiPath).standardizedFileURL.path
-        let file = URL(fileURLWithPath: filePath).standardizedFileURL.path
+        let prefix = URL(fileURLWithPath: wikiPath).resolvingSymlinksInPath().standardizedFileURL.path
+        let file = URL(fileURLWithPath: filePath).resolvingSymlinksInPath().standardizedFileURL.path
         let relative: String
         if file == prefix {
             relative = ""
@@ -835,6 +840,19 @@ private let globalHotKeyHandler: EventHandlerUPP = { _, _, userData in
     return noErr
 }
 
+private final class SortableTaskHeaderView: NSTableHeaderView {
+    var columnClickHandler: ((Int) -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        let clickedColumn = column(at: point)
+        super.mouseDown(with: event)
+        if clickedColumn >= 0 {
+            columnClickHandler?(clickedColumn)
+        }
+    }
+}
+
 private final class PromptController: NSWindowController, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate {
     private static let evaluationTimeoutSeconds = 45.0
     private static let urgencyColumnSample = "23:59"
@@ -920,9 +938,15 @@ private final class PromptController: NSWindowController, NSTableViewDataSource,
         let doneColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("done"))
         doneColumn.title = ""
         doneColumn.width = 28
+        let priorityColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("priority"))
+        priorityColumn.title = "Priority"
+        priorityColumn.width = 62
+        priorityColumn.minWidth = 62
+        priorityColumn.maxWidth = 62
+        priorityColumn.sortDescriptorPrototype = NSSortDescriptor(key: "priority", ascending: true)
         let taskColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("task"))
         taskColumn.title = "Task"
-        taskColumn.width = 332
+        taskColumn.width = 270
         taskColumn.sortDescriptorPrototype = NSSortDescriptor(
             key: "task",
             ascending: true,
@@ -944,12 +968,18 @@ private final class PromptController: NSWindowController, NSTableViewDataSource,
             selector: #selector(NSString.localizedCaseInsensitiveCompare(_:))
         )
         tableView.addTableColumn(doneColumn)
+        tableView.addTableColumn(priorityColumn)
         tableView.addTableColumn(taskColumn)
         tableView.addTableColumn(whenColumn)
         tableView.addTableColumn(sourceColumn)
         tableView.delegate = self
         tableView.dataSource = self
         tableView.target = self
+        let headerView = SortableTaskHeaderView()
+        headerView.columnClickHandler = { [weak self] column in
+            self?.sortByHeaderColumn(column)
+        }
+        tableView.headerView = headerView
         tableView.doubleAction = #selector(start)
         stack.addArrangedSubview(scrollView)
 
@@ -1089,7 +1119,12 @@ private final class PromptController: NSWindowController, NSTableViewDataSource,
             ])
         }
 
-        if columnId == "when" {
+        if columnId == "priority" {
+            textField.stringValue = task.priorityLabel
+            textField.textColor = .secondaryLabelColor
+            textField.font = .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+            textField.alignment = .right
+        } else if columnId == "when" {
             textField.stringValue = task.urgencyLabel
             textField.textColor = .secondaryLabelColor
             textField.font = .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
@@ -1121,6 +1156,8 @@ private final class PromptController: NSWindowController, NSTableViewDataSource,
             return
         }
         switch key {
+        case "priority":
+            sortColumn = .priority
         case "task":
             sortColumn = .task
         case "when":
@@ -1136,6 +1173,41 @@ private final class PromptController: NSWindowController, NSTableViewDataSource,
         if let selectedTask,
            let index = filteredTasks.firstIndex(where: { $0.filePath == selectedTask.filePath && $0.lineNumber == selectedTask.lineNumber }) {
             tableView.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+        }
+    }
+
+    private func sortByHeaderColumn(_ column: Int) {
+        guard tableView.tableColumns.indices.contains(column) else { return }
+        let identifier = tableView.tableColumns[column].identifier.rawValue
+        let nextColumn: TaskPickerSortColumn
+        switch identifier {
+        case "priority":
+            nextColumn = .priority
+        case "task":
+            nextColumn = .task
+        case "when":
+            nextColumn = .when
+        case "source":
+            nextColumn = .source
+        default:
+            return
+        }
+
+        if sortColumn == nextColumn {
+            sortAscending.toggle()
+        } else {
+            sortColumn = nextColumn
+            sortAscending = true
+        }
+
+        filteredTasks = sortedTasks(filteredTasks)
+        tableView.reloadData()
+        if let selectedTask,
+           let row = filteredTasks.firstIndex(where: { $0.filePath == selectedTask.filePath && $0.lineNumber == selectedTask.lineNumber }) {
+            tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        } else if !filteredTasks.isEmpty {
+            tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+            selectTask(filteredTasks[0])
         }
     }
 
