@@ -263,7 +263,7 @@ private final class TaskForgeStore {
     static let tasksURL = URL(fileURLWithPath: "\(wikiPath)/10_journal/TaskForge")
     static let pomodoroLogURL = URL(fileURLWithPath: "\(wikiPath)/99_meta/tasks/pomodoro-sessions.jsonl")
     static let impromptuTasksURL = URL(fileURLWithPath: "\(wikiPath)/10_journal/TaskForge/inbox.md")
-    static let evaluateTaskDecisionScriptURL = URL(fileURLWithPath: "\(wikiPath)/99_meta/scripts/taskforge/run_evaluate_task_decision_shortcut.sh")
+    static let evaluateTaskDecisionScriptURL = taskEvaluationScriptURL()
 
     private static let metadataPattern = try! NSRegularExpression(pattern: #"\[([A-Za-z0-9_-]+)::\s*([^\]]+)\]"#)
     private static let taskNotesPattern = try! NSRegularExpression(pattern: #"\[\[(10_journal/TaskNotes/[^\]|]+)"#)
@@ -279,6 +279,31 @@ private final class TaskForgeStore {
             return homeWiki
         }
         return "\(NSHomeDirectory())/Documents/wiki"
+    }
+
+    private static func taskEvaluationScriptURL() -> URL {
+        let relativeCandidates = [
+            "99_meta/automation/task/taskforge/run_evaluate_task_decision_shortcut.sh",
+            "99_meta/automation/task/mobile/run_evaluate_task_decision_shortcut.sh",
+            "99_meta/scripts/taskforge/run_evaluate_task_decision_shortcut.sh"
+        ]
+        for relativePath in relativeCandidates {
+            let url = URL(fileURLWithPath: "\(wikiPath)/\(relativePath)")
+            if FileManager.default.isExecutableFile(atPath: url.path) {
+                return url
+            }
+        }
+        return URL(fileURLWithPath: "\(wikiPath)/\(relativeCandidates[0])")
+    }
+
+    static func missingTaskEvaluationScriptError() -> NSError {
+        NSError(
+            domain: "TaskEvaluation",
+            code: 127,
+            userInfo: [
+                NSLocalizedDescriptionKey: "Evaluate Task Decision wrapper is missing or not executable at \(evaluateTaskDecisionScriptURL.path)."
+            ]
+        )
     }
 
     static func loadOpenTasks() -> [TaskForgeTask] {
@@ -1422,6 +1447,10 @@ private final class PromptController: NSWindowController, NSWindowDelegate, NSTa
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try encoder.encode(input).write(to: inputURL, options: .atomic)
+
+        guard FileManager.default.isExecutableFile(atPath: TaskForgeStore.evaluateTaskDecisionScriptURL.path) else {
+            throw TaskForgeStore.missingTaskEvaluationScriptError()
+        }
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
