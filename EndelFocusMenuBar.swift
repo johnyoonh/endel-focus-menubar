@@ -853,9 +853,10 @@ private final class SortableTaskHeaderView: NSTableHeaderView {
     }
 }
 
-private final class PromptController: NSWindowController, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate {
+private final class PromptController: NSWindowController, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate {
     private static let evaluationTimeoutSeconds = 45.0
     private static let urgencyColumnSample = "23:59"
+    private static let priorityColumnTitle = "Priority"
     private let queryField = NSTextField(string: "")
     private let tableView = NSTableView()
     private let taskField = NSTextField(string: "")
@@ -872,6 +873,7 @@ private final class PromptController: NSWindowController, NSTableViewDataSource,
     private var sortAscending = true
     private var isEvaluating = false
     private var completion: ((FocusConfig?) -> Void)?
+    var closeHandler: (() -> Void)?
 
     convenience init(tasks: [TaskForgeTask], completion: @escaping (FocusConfig?) -> Void) {
         let window = NSWindow(
@@ -884,6 +886,7 @@ private final class PromptController: NSWindowController, NSTableViewDataSource,
         window.center()
         self.init(window: window, tasks: tasks)
         self.completion = completion
+        window.delegate = self
         buildUI()
     }
 
@@ -895,6 +898,10 @@ private final class PromptController: NSWindowController, NSTableViewDataSource,
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        closeHandler?()
     }
 
     private func buildUI() {
@@ -937,16 +944,19 @@ private final class PromptController: NSWindowController, NSTableViewDataSource,
 
         let doneColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("done"))
         doneColumn.title = ""
-        doneColumn.width = 28
+        doneColumn.width = 22
+        doneColumn.minWidth = 22
+        doneColumn.maxWidth = 22
         let priorityColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("priority"))
-        priorityColumn.title = "Priority"
-        priorityColumn.width = 62
-        priorityColumn.minWidth = 62
-        priorityColumn.maxWidth = 62
+        priorityColumn.title = Self.priorityColumnTitle
+        let priorityColumnWidth = Self.priorityColumnWidth()
+        priorityColumn.width = priorityColumnWidth
+        priorityColumn.minWidth = priorityColumnWidth
+        priorityColumn.maxWidth = 120
         priorityColumn.sortDescriptorPrototype = NSSortDescriptor(key: "priority", ascending: true)
         let taskColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("task"))
         taskColumn.title = "Task"
-        taskColumn.width = 270
+        taskColumn.width = 286
         taskColumn.sortDescriptorPrototype = NSSortDescriptor(
             key: "task",
             ascending: true,
@@ -1031,6 +1041,12 @@ private final class PromptController: NSWindowController, NSTableViewDataSource,
         ceil(urgencyColumnSample.size(withAttributes: [
             .font: NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
         ]).width) + 12
+    }
+
+    private static func priorityColumnWidth() -> CGFloat {
+        ceil(priorityColumnTitle.size(withAttributes: [
+            .font: NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
+        ]).width) + 10
     }
 
     @objc private func cancel() {
@@ -1900,6 +1916,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func openPrompt() {
         guard requestAccessibilityPermissionIfNeeded(showPane: true) else { return }
 
+        NSApp.setActivationPolicy(.regular)
+        setupStandardEditMenu()
         let tasks = TaskForgeStore.loadOpenTasks()
         promptController = PromptController(tasks: tasks) { [weak self] config in
             guard let self, let config else { return }
@@ -1917,6 +1935,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             self.updateStatusTitle()
             self.startLocalCountdown()
             self.startFlow(config)
+        }
+        promptController?.closeHandler = { [weak self] in
+            self?.promptController = nil
+            NSApp.setActivationPolicy(.accessory)
+            self?.rebuildMenu()
         }
         promptController?.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
