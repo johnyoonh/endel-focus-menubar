@@ -53,7 +53,7 @@ The global shortcut `Ctrl+Option+Command+F` opens the TaskForge picker when no s
 Completed focus rounds are appended to:
 
 ```text
-${TASKFORGE_WIKI_PATH:-~/Documents/wiki}/99_meta/tasks/pomodoro-sessions.jsonl
+${TASKFORGE_WIKI_PATH:-$HOME/wiki}/99_meta/tasks/pomodoro-sessions.jsonl
 ```
 
 Plan travel transition work blocks with:

@@ -131,6 +131,12 @@ private struct TaskForgeTask {
     let endDate: String?
     let endAt: String?
     let taskNotesPath: String?
+    let schedulerRank: Int?
+    let schedulerScore: Double?
+    let rankingReason: String?
+    let readiness: String?
+    let importance: String?
+    let urgency: String?
 
     var detail: String {
         var parts: [String] = []
@@ -181,11 +187,74 @@ private struct TaskForgeTask {
         }
         return nil
     }
+
+    func withSchedulerRank(_ rank: TaskForgeRankMetadata?) -> TaskForgeTask {
+        TaskForgeTask(
+            title: title,
+            list: list,
+            filePath: filePath,
+            lineNumber: lineNumber,
+            isCompleted: isCompleted,
+            estimate: estimate,
+            progress: progress,
+            status: status,
+            dueDate: dueDate,
+            dueTime: dueTime,
+            scheduled: scheduled,
+            scheduledAt: scheduledAt,
+            endDate: endDate,
+            endAt: endAt,
+            taskNotesPath: taskNotesPath,
+            schedulerRank: rank?.rank,
+            schedulerScore: rank?.score,
+            rankingReason: rank?.rankingReason,
+            readiness: rank?.readiness,
+            importance: rank?.importance,
+            urgency: rank?.urgency
+        )
+    }
+}
+
+private struct TaskForgeRankMetadata {
+    let rank: Int
+    let score: Double?
+    let rankingReason: String?
+    let readiness: String?
+    let importance: String?
+    let urgency: String?
+}
+
+private struct TaskForgeRankPayload: Decodable {
+    let tasks: [TaskForgeRankedTask]
+}
+
+private struct TaskForgeRankedTask: Decodable {
+    let path: String
+    let line: Int
+    let rank: Int?
+    let deterministicRank: Int?
+    let rankingReason: String?
+    let readiness: String?
+    let importance: String?
+    let urgency: String?
+    let score: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case path
+        case line
+        case rank
+        case deterministicRank = "deterministic_rank"
+        case rankingReason = "ranking_reason"
+        case readiness
+        case importance
+        case urgency
+        case score
+    }
 }
 
 private final class TaskForgeStore {
     static let wikiPath = ProcessInfo.processInfo.environment["TASKFORGE_WIKI_PATH"]
-        ?? "\(NSHomeDirectory())/Documents/wiki"
+        ?? defaultWikiPath()
     static let tasksURL = URL(fileURLWithPath: "\(wikiPath)/10_journal/TaskForge")
     static let pomodoroLogURL = URL(fileURLWithPath: "\(wikiPath)/99_meta/tasks/pomodoro-sessions.jsonl")
     static let impromptuTasksURL = URL(fileURLWithPath: "\(wikiPath)/10_journal/TaskForge/inbox.md")
@@ -197,6 +266,16 @@ private final class TaskForgeStore {
     private static let dueTimePattern = try! NSRegularExpression(pattern: #"⏰\s*(\d{1,2})(?::(\d{2}))?\s*(AM|PM)"#, options: .caseInsensitive)
     private static let tagPattern = try! NSRegularExpression(pattern: #"^#?[A-Za-z0-9][A-Za-z0-9_/-]*$"#)
 
+    private static func defaultWikiPath() -> String {
+        let homeWiki = "\(NSHomeDirectory())/wiki"
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: "\(homeWiki)/10_journal/TaskForge", isDirectory: &isDirectory),
+           isDirectory.boolValue {
+            return homeWiki
+        }
+        return "\(NSHomeDirectory())/Documents/wiki"
+    }
+
     static func loadOpenTasks() -> [TaskForgeTask] {
         guard let files = try? FileManager.default.contentsOfDirectory(
             at: tasksURL,
@@ -206,11 +285,15 @@ private final class TaskForgeStore {
             return []
         }
 
-        return files
+        let tasks = files
             .filter { $0.pathExtension.lowercased() == "md" }
             .sorted { $0.lastPathComponent.localizedCaseInsensitiveCompare($1.lastPathComponent) == .orderedAscending }
             .flatMap(loadOpenTasks(from:))
-            .sorted(by: isMoreUrgent)
+        let ranks = loadSchedulerRanks()
+        let rankedTasks = tasks.map { task in
+            task.withSchedulerRank(ranks[rankKey(filePath: task.filePath, lineNumber: task.lineNumber)])
+        }
+        return rankedTasks.sorted(by: isHigherPriority)
     }
 
     private static func loadOpenTasks(from fileURL: URL) -> [TaskForgeTask] {
@@ -243,8 +326,132 @@ private final class TaskForgeStore {
             scheduledAt: metadata["scheduledat"],
             endDate: metadata["end"],
             endAt: metadata["endat"],
-            taskNotesPath: firstCapture(taskNotesPattern, in: line)
+            taskNotesPath: firstCapture(taskNotesPattern, in: line),
+            schedulerRank: nil,
+            schedulerScore: nil,
+            rankingReason: nil,
+            readiness: nil,
+            importance: nil,
+            urgency: nil
         )
+    }
+
+    private static func loadSchedulerRanks() -> [String: TaskForgeRankMetadata] {
+        let scriptURL = schedulerExportScriptURL()
+        guard FileManager.default.fileExists(atPath: scriptURL.path) else { return [:] }
+
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("TaskForgeRanks-\(UUID().uuidString).json")
+        defer {
+            try? FileManager.default.removeItem(at: outputURL)
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = [
+            "python3",
+            scriptURL.path,
+            "--vault",
+            wikiPath,
+            "--date",
+            localTodayString(),
+            "--timezone",
+            TimeZone.current.identifier,
+            "--limit",
+            "500",
+            "--pool",
+            "all-active",
+            "--output",
+            outputURL.path
+        ]
+        let errorPipe = Pipe()
+        process.standardOutput = Pipe()
+        process.standardError = errorPipe
+
+        do {
+            try process.run()
+        } catch {
+            NSLog("taskforge: shared ranking unavailable: %@", error.localizedDescription)
+            return [:]
+        }
+
+        let semaphore = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in
+            semaphore.signal()
+        }
+        if semaphore.wait(timeout: .now() + 8.0) == .timedOut {
+            process.terminationHandler = nil
+            if process.isRunning {
+                process.terminate()
+                Thread.sleep(forTimeInterval: 0.2)
+                if process.isRunning {
+                    kill(process.processIdentifier, SIGKILL)
+                }
+            }
+            NSLog("taskforge: shared ranking timed out")
+            return [:]
+        }
+        process.terminationHandler = nil
+
+        guard process.terminationStatus == 0 else {
+            let data = errorPipe.fileHandleForReading.readDataToEndOfFile()
+            let message = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            NSLog("taskforge: shared ranking failed status=\(process.terminationStatus) \(message ?? "")")
+            return [:]
+        }
+
+        let data: Data
+        do {
+            data = try Data(contentsOf: outputURL)
+        } catch {
+            NSLog("taskforge: shared ranking output missing: %@", error.localizedDescription)
+            return [:]
+        }
+        do {
+            let payload = try JSONDecoder().decode(TaskForgeRankPayload.self, from: data)
+            var ranks: [String: TaskForgeRankMetadata] = [:]
+            for item in payload.tasks {
+                guard let rank = item.rank ?? item.deterministicRank else { continue }
+                ranks[rankKey(relativePath: item.path, lineNumber: item.line)] = TaskForgeRankMetadata(
+                    rank: rank,
+                    score: item.score,
+                    rankingReason: item.rankingReason,
+                    readiness: item.readiness,
+                    importance: item.importance,
+                    urgency: item.urgency
+                )
+            }
+            return ranks
+        } catch {
+            NSLog("taskforge: could not decode shared ranking: %@", error.localizedDescription)
+            return [:]
+        }
+    }
+
+    private static func schedulerExportScriptURL() -> URL {
+        let wikiScript = URL(fileURLWithPath: "\(wikiPath)/99_meta/automation/task/mobile/export_focus_candidates.py")
+        if FileManager.default.fileExists(atPath: wikiScript.path) {
+            return wikiScript
+        }
+        return URL(fileURLWithPath: "\(NSHomeDirectory())/wiki/99_meta/automation/task/mobile/export_focus_candidates.py")
+    }
+
+    private static func rankKey(filePath: String, lineNumber: Int) -> String {
+        let prefix = URL(fileURLWithPath: wikiPath).standardizedFileURL.path
+        let file = URL(fileURLWithPath: filePath).standardizedFileURL.path
+        let relative: String
+        if file == prefix {
+            relative = ""
+        } else if file.hasPrefix(prefix + "/") {
+            relative = String(file.dropFirst(prefix.count + 1))
+        } else {
+            relative = file
+        }
+        return rankKey(relativePath: relative, lineNumber: lineNumber)
+    }
+
+    private static func rankKey(relativePath: String, lineNumber: Int) -> String {
+        "\(relativePath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))):\(lineNumber)"
     }
 
     static func markInProgress(_ task: TaskForgeTask) throws {
@@ -537,6 +744,22 @@ private final class TaskForgeStore {
         return String(format: "%02d:%@", hour, rawMinute)
     }
 
+    private static func isHigherPriority(_ lhs: TaskForgeTask, _ rhs: TaskForgeTask) -> Bool {
+        switch (lhs.schedulerRank, rhs.schedulerRank) {
+        case let (left?, right?):
+            if left != right {
+                return left < right
+            }
+        case (_?, nil):
+            return true
+        case (nil, _?):
+            return false
+        case (nil, nil):
+            break
+        }
+        return isMoreUrgent(lhs, rhs)
+    }
+
     private static func isMoreUrgent(_ lhs: TaskForgeTask, _ rhs: TaskForgeTask) -> Bool {
         switch (lhs.urgencyDate, rhs.urgencyDate) {
         case let (left?, right?):
@@ -581,6 +804,13 @@ private enum TimerPhase: String {
     case done = "Done"
 }
 
+private enum TaskPickerSortColumn {
+    case priority
+    case task
+    case when
+    case source
+}
+
 private struct PomodoroLogEntry: Codable {
     var completedAt: String
     var taskTitle: String
@@ -620,6 +850,8 @@ private final class PromptController: NSWindowController, NSTableViewDataSource,
     private var allTasks: [TaskForgeTask]
     private var filteredTasks: [TaskForgeTask]
     private var selectedTask: TaskForgeTask?
+    private var sortColumn: TaskPickerSortColumn = .priority
+    private var sortAscending = true
     private var isEvaluating = false
     private var completion: ((FocusConfig?) -> Void)?
 
@@ -691,20 +923,30 @@ private final class PromptController: NSWindowController, NSTableViewDataSource,
         let taskColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("task"))
         taskColumn.title = "Task"
         taskColumn.width = 332
+        taskColumn.sortDescriptorPrototype = NSSortDescriptor(
+            key: "task",
+            ascending: true,
+            selector: #selector(NSString.localizedCaseInsensitiveCompare(_:))
+        )
         let whenColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("when"))
         whenColumn.title = "When"
         let whenColumnWidth = Self.urgencyColumnWidth()
         whenColumn.width = whenColumnWidth
         whenColumn.minWidth = whenColumnWidth
         whenColumn.maxWidth = whenColumnWidth
+        whenColumn.sortDescriptorPrototype = NSSortDescriptor(key: "when", ascending: true)
         let sourceColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("source"))
         sourceColumn.title = "Source"
         sourceColumn.width = 130
+        sourceColumn.sortDescriptorPrototype = NSSortDescriptor(
+            key: "source",
+            ascending: true,
+            selector: #selector(NSString.localizedCaseInsensitiveCompare(_:))
+        )
         tableView.addTableColumn(doneColumn)
         tableView.addTableColumn(taskColumn)
         tableView.addTableColumn(whenColumn)
         tableView.addTableColumn(sourceColumn)
-        tableView.headerView = nil
         tableView.delegate = self
         tableView.dataSource = self
         tableView.target = self
@@ -871,6 +1113,30 @@ private final class PromptController: NSWindowController, NSTableViewDataSource,
         let row = tableView.selectedRow
         guard filteredTasks.indices.contains(row) else { return }
         selectTask(filteredTasks[row])
+    }
+
+    func tableView(_ tableView: NSTableView, sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
+        guard let descriptor = tableView.sortDescriptors.first,
+              let key = descriptor.key else {
+            return
+        }
+        switch key {
+        case "task":
+            sortColumn = .task
+        case "when":
+            sortColumn = .when
+        case "source":
+            sortColumn = .source
+        default:
+            sortColumn = .priority
+        }
+        sortAscending = descriptor.ascending
+        filteredTasks = sortedTasks(filteredTasks)
+        tableView.reloadData()
+        if let selectedTask,
+           let index = filteredTasks.firstIndex(where: { $0.filePath == selectedTask.filePath && $0.lineNumber == selectedTask.lineNumber }) {
+            tableView.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+        }
     }
 
     @objc private func start() {
@@ -1133,15 +1399,17 @@ private final class PromptController: NSWindowController, NSTableViewDataSource,
 
     private func applyFilter() {
         let query = queryField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let matchingTasks: [TaskForgeTask]
         if query.isEmpty {
-            filteredTasks = allTasks
+            matchingTasks = allTasks
         } else {
             let tokens = query.split(separator: " ").map(String.init)
-            filteredTasks = allTasks.filter { task in
+            matchingTasks = allTasks.filter { task in
                 let haystack = "\(task.title) \(task.list) \(task.estimate ?? "") \(task.progress ?? "") \(task.status ?? "") \(task.dueDate ?? "") \(task.dueTime ?? "") \(task.scheduled ?? "") \(task.scheduledAt ?? "") \(task.endAt ?? "")".lowercased()
                 return tokens.allSatisfy { haystack.contains($0) }
             }
         }
+        filteredTasks = sortedTasks(matchingTasks)
 
         tableView.reloadData()
         if let selectedTask,
@@ -1150,6 +1418,80 @@ private final class PromptController: NSWindowController, NSTableViewDataSource,
         } else if !filteredTasks.isEmpty {
             tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
             selectTask(filteredTasks[0])
+        }
+    }
+
+    private func sortedTasks(_ tasks: [TaskForgeTask]) -> [TaskForgeTask] {
+        tasks.sorted { lhs, rhs in
+            let primary = compare(lhs, rhs, by: sortColumn)
+            if primary != .orderedSame {
+                return sortAscending ? primary == .orderedAscending : primary == .orderedDescending
+            }
+            return compare(lhs, rhs, by: .priority) == .orderedAscending
+        }
+    }
+
+    private func compare(_ lhs: TaskForgeTask, _ rhs: TaskForgeTask, by column: TaskPickerSortColumn) -> ComparisonResult {
+        switch column {
+        case .priority:
+            return comparePriority(lhs, rhs)
+        case .task:
+            let title = lhs.title.localizedCaseInsensitiveCompare(rhs.title)
+            return title == .orderedSame ? comparePriority(lhs, rhs) : title
+        case .when:
+            let when = compareOptionalDates(lhs.urgencyDate, rhs.urgencyDate)
+            return when == .orderedSame ? comparePriority(lhs, rhs) : when
+        case .source:
+            let source = lhs.list.localizedCaseInsensitiveCompare(rhs.list)
+            return source == .orderedSame ? comparePriority(lhs, rhs) : source
+        }
+    }
+
+    private func comparePriority(_ lhs: TaskForgeTask, _ rhs: TaskForgeTask) -> ComparisonResult {
+        let rank = compareOptionalInts(lhs.schedulerRank, rhs.schedulerRank)
+        if rank != .orderedSame {
+            return rank
+        }
+        let when = compareOptionalDates(lhs.urgencyDate, rhs.urgencyDate)
+        if when != .orderedSame {
+            return when
+        }
+        let source = lhs.list.localizedCaseInsensitiveCompare(rhs.list)
+        if source != .orderedSame {
+            return source
+        }
+        let title = lhs.title.localizedCaseInsensitiveCompare(rhs.title)
+        if title != .orderedSame {
+            return title
+        }
+        return lhs.lineNumber == rhs.lineNumber ? .orderedSame : (lhs.lineNumber < rhs.lineNumber ? .orderedAscending : .orderedDescending)
+    }
+
+    private func compareOptionalInts(_ lhs: Int?, _ rhs: Int?) -> ComparisonResult {
+        switch (lhs, rhs) {
+        case let (left?, right?):
+            if left == right { return .orderedSame }
+            return left < right ? .orderedAscending : .orderedDescending
+        case (_?, nil):
+            return .orderedAscending
+        case (nil, _?):
+            return .orderedDescending
+        case (nil, nil):
+            return .orderedSame
+        }
+    }
+
+    private func compareOptionalDates(_ lhs: Date?, _ rhs: Date?) -> ComparisonResult {
+        switch (lhs, rhs) {
+        case let (left?, right?):
+            if left == right { return .orderedSame }
+            return left < right ? .orderedAscending : .orderedDescending
+        case (_?, nil):
+            return .orderedAscending
+        case (nil, _?):
+            return .orderedDescending
+        case (nil, nil):
+            return .orderedSame
         }
     }
 
@@ -1991,7 +2333,13 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             scheduledAt: nil,
             endDate: nil,
             endAt: nil,
-            taskNotesPath: config.taskNotesPath
+            taskNotesPath: config.taskNotesPath,
+            schedulerRank: nil,
+            schedulerScore: nil,
+            rankingReason: nil,
+            readiness: nil,
+            importance: nil,
+            urgency: nil
         )
 
         do {
