@@ -229,6 +229,14 @@ private struct TaskForgeRankMetadata {
     let urgency: String?
 }
 
+private struct ObsidianRegistry: Decodable {
+    let vaults: [String: ObsidianVault]
+}
+
+private struct ObsidianVault: Decodable {
+    let path: String
+}
+
 private struct TaskForgeRankPayload: Decodable {
     let tasks: [TaskForgeRankedTask]
 }
@@ -304,6 +312,44 @@ private final class TaskForgeStore {
                 NSLocalizedDescriptionKey: "Evaluate Task Decision wrapper is missing or not executable at \(evaluateTaskDecisionScriptURL.path)."
             ]
         )
+    }
+
+    static func obsidianURL(for task: TaskForgeTask) -> URL? {
+        let vaultURL = URL(fileURLWithPath: wikiPath)
+            .resolvingSymlinksInPath()
+            .standardizedFileURL
+        let taskURL = URL(fileURLWithPath: task.filePath)
+            .resolvingSymlinksInPath()
+            .standardizedFileURL
+        let vaultPrefix = vaultURL.path.hasSuffix("/") ? vaultURL.path : "\(vaultURL.path)/"
+        guard taskURL.path.hasPrefix(vaultPrefix) else { return nil }
+
+        let relativePath = String(taskURL.path.dropFirst(vaultPrefix.count))
+        var components = URLComponents()
+        components.scheme = "obsidian"
+        components.host = "adv-uri"
+        components.queryItems = [
+            URLQueryItem(name: "vault", value: obsidianVaultIdentifier(for: vaultURL)),
+            URLQueryItem(name: "filepath", value: relativePath),
+            URLQueryItem(name: "line", value: String(task.lineNumber))
+        ]
+        return components.url
+    }
+
+    private static func obsidianVaultIdentifier(for vaultURL: URL) -> String {
+        let registryURL = URL(fileURLWithPath: NSHomeDirectory())
+            .appendingPathComponent("Library/Application Support/obsidian/obsidian.json")
+        guard let data = try? Data(contentsOf: registryURL),
+              let registry = try? JSONDecoder().decode(ObsidianRegistry.self, from: data) else {
+            return vaultURL.lastPathComponent
+        }
+
+        let vaultPath = vaultURL.resolvingSymlinksInPath().standardizedFileURL.path
+        return registry.vaults.first { _, vault in
+            URL(fileURLWithPath: vault.path)
+                .resolvingSymlinksInPath()
+                .standardizedFileURL.path == vaultPath
+        }?.key ?? vaultURL.lastPathComponent
     }
 
     static func loadOpenTasks() -> [TaskForgeTask] {
@@ -1015,7 +1061,7 @@ private final class PromptController: NSWindowController, NSWindowDelegate, NSTa
             self?.sortByHeaderColumn(column)
         }
         tableView.headerView = headerView
-        tableView.doubleAction = #selector(start)
+        tableView.doubleAction = #selector(openTaskInObsidian)
         stack.addArrangedSubview(scrollView)
 
         taskField.delegate = self
@@ -1139,6 +1185,8 @@ private final class PromptController: NSWindowController, NSWindowDelegate, NSTa
             checkbox.action = #selector(toggleTaskCompleted(_:))
             checkbox.tag = row
             checkbox.state = task.isCompleted ? .on : .off
+            cell.toolTip = task.title
+            checkbox.toolTip = task.title
             return cell
         }
 
@@ -1181,6 +1229,8 @@ private final class PromptController: NSWindowController, NSWindowDelegate, NSTa
             textField.font = .systemFont(ofSize: NSFont.systemFontSize)
             textField.alignment = .left
         }
+        cell.toolTip = task.title
+        textField.toolTip = task.title
         return cell
     }
 
@@ -1273,6 +1323,21 @@ private final class PromptController: NSWindowController, NSWindowDelegate, NSTa
             completeStart(taskName: task, focus: focus, rest: rest, rounds: rounds, taskForgeTask: selectedTask, markTaskInProgressOnStart: true)
         } else {
             startInboxTask(taskName: task, focus: focus, rest: rest, rounds: rounds)
+        }
+    }
+
+    @objc private func openTaskInObsidian() {
+        guard !isEvaluating else { return }
+        let row = tableView.clickedRow
+        guard filteredTasks.indices.contains(row) else { return }
+        let task = filteredTasks[row]
+        guard let url = TaskForgeStore.obsidianURL(for: task), NSWorkspace.shared.open(url) else {
+            NSSound.beep()
+            showMessage(
+                title: "Could not open TaskForge task",
+                message: "The task source is outside the configured Obsidian vault or Obsidian could not open it."
+            )
+            return
         }
     }
 

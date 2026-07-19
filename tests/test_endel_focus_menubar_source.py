@@ -35,5 +35,23 @@ class TaskEvaluationScriptRegressionTests(unittest.TestCase):
         self.assertLess(self.source.index(guard), self.source.index(launch))
 
 
+class TaskPickerInteractionRegressionTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.source = SOURCE.read_text(encoding="utf-8")
+
+    def test_task_rows_expose_the_full_title_as_a_tooltip(self) -> None:
+        self.assertIn("cell.toolTip = task.title", self.source)
+        self.assertIn("textField.toolTip = task.title", self.source)
+        self.assertIn("checkbox.toolTip = task.title", self.source)
+
+    def test_double_click_opens_the_task_line_with_advanced_uri(self) -> None:
+        self.assertIn("tableView.doubleAction = #selector(openTaskInObsidian)", self.source)
+        self.assertIn('components.host = "adv-uri"', self.source)
+        self.assertIn("obsidianVaultIdentifier(for: vaultURL)", self.source)
+        self.assertIn('URLQueryItem(name: "filepath", value: relativePath)', self.source)
+        self.assertIn('URLQueryItem(name: "line", value: String(task.lineNumber))', self.source)
+
+
 if __name__ == "__main__":
     unittest.main()

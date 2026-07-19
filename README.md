@@ -9,7 +9,7 @@ This is a small Swift menu-bar helper for starting Flow focus sessions with:
 
 The start dialog loads open TaskForge tasks from the Obsidian vault and lets you search/select one. The top text field filters the task list and also supplies the title for `Inbox Task`. Use `Inbox Task` to evaluate that typed text with the `Evaluate Task Decision` shortcut before saving it to TaskForge. Evaluation runs in the background with a 45-second timeout. If the decision is `now`, or you choose `Start Anyway`, it is saved to Inbox with `[status:: In Progress]` and an estimate matching the focus minutes. If you choose `Do Later`, the app validates the LLM's proposed list, tags, estimate, due date, and scheduled date, then writes to the recommended existing TaskForge list or falls back to `inbox.md`.
 
-Use the checkbox beside a TaskForge task to mark it complete or open again. Checked tasks stay visible until you close the picker so you can undo the action, then disappear the next time the picker is opened.
+Hover over a TaskForge row to see its full task description. Double-click a row to open its source note at the task line in Obsidian; this uses the Obsidian Advanced URI community plugin. Use the checkbox beside a task to mark it complete or open again. Checked tasks stay visible until you close the picker so you can undo the action, then disappear the next time the picker is opened.
 
 Run it with:
 
