@@ -1713,7 +1713,7 @@ private final class PromptController: NSWindowController, NSWindowDelegate, NSTa
 private final class AccessibilityPermissionController: NSWindowController {
     convenience init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 440, height: 210),
+            contentRect: NSRect(x: 0, y: 0, width: 470, height: 250),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -1739,10 +1739,25 @@ private final class AccessibilityPermissionController: NSWindowController {
             stack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 22)
         ])
 
-        let title = NSTextField(labelWithString: "Allow this helper to control Flow")
+        let isInstalledApp = Bundle.main.bundleURL.pathExtension.lowercased() == "app"
+        let title = NSTextField(labelWithString: "Allow Endel Focus Menu Bar to control Flow")
         title.font = .systemFont(ofSize: 16, weight: .semibold)
 
-        let body = NSTextField(wrappingLabelWithString: "The helper can use macOS Accessibility automation for fallback timer controls. Add this Swift process or Terminal to Accessibility, then start the timer again.")
+        let instructions: String
+        if isInstalledApp {
+            instructions = """
+            Go to System Settings → Privacy & Security → Accessibility. Click +, choose Endel Focus Menu Bar.app from ~/Applications, and turn it on.
+
+            If an older entry is already there but permission still fails, remove it and add the app again. This window closes automatically once permission is recognized.
+            """
+        } else {
+            instructions = """
+            Go to System Settings → Privacy & Security → Accessibility and turn on Terminal (or the Swift process if macOS lists it).
+
+            Terminal/Swift is needed only because the helper was launched with ./run.sh. When using the installed app, enable Endel Focus Menu Bar.app instead. This window closes automatically once permission is recognized.
+            """
+        }
+        let body = NSTextField(wrappingLabelWithString: instructions)
         body.textColor = .secondaryLabelColor
 
         let buttonStack = NSStackView()
@@ -1751,7 +1766,7 @@ private final class AccessibilityPermissionController: NSWindowController {
         buttonStack.distribution = .fillEqually
 
         let openButton = NSButton(title: "Open Accessibility Settings", target: self, action: #selector(openSettings))
-        let doneButton = NSButton(title: "Done", target: self, action: #selector(done))
+        let doneButton = NSButton(title: "Close", target: self, action: #selector(done))
         buttonStack.addArrangedSubview(openButton)
         buttonStack.addArrangedSubview(doneButton)
 

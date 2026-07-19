@@ -53,5 +53,20 @@ class TaskPickerInteractionRegressionTests(unittest.TestCase):
         self.assertIn('URLQueryItem(name: "line", value: String(task.lineNumber))', self.source)
 
 
+class AccessibilityInstructionRegressionTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.source = SOURCE.read_text(encoding="utf-8")
+
+    def test_installed_app_instructions_name_the_app_and_settings_path(self) -> None:
+        self.assertIn('Bundle.main.bundleURL.pathExtension.lowercased() == "app"', self.source)
+        self.assertIn("System Settings → Privacy & Security → Accessibility", self.source)
+        self.assertIn("choose Endel Focus Menu Bar.app from ~/Applications", self.source)
+
+    def test_run_script_instructions_limit_terminal_permission_to_that_mode(self) -> None:
+        self.assertIn("Terminal/Swift is needed only because the helper was launched with ./run.sh", self.source)
+        self.assertIn("When using the installed app, enable Endel Focus Menu Bar.app instead", self.source)
+
+
 if __name__ == "__main__":
     unittest.main()

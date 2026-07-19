@@ -26,7 +26,7 @@ chmod +x build_app.sh
 open "$HOME/Applications/Endel Focus Menu Bar.app"
 ```
 
-The first time it controls Flow, macOS may require Automation permission for `Endel Focus Menu Bar`.
+The first time it controls Flow, macOS may require Automation or Accessibility permission for `Endel Focus Menu Bar`. For Accessibility, add `~/Applications/Endel Focus Menu Bar.app` under **System Settings → Privacy & Security → Accessibility**. Enable Terminal or Swift only when running the helper through `./run.sh`.
 
 The helper sets Flow's session title from the selected task, then starts or resumes Flow through its AppleScript API.
 
