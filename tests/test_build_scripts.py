@@ -42,6 +42,40 @@ class BuildScriptSafetyTests(unittest.TestCase):
         self.assertLess(backup_at, install_at)
         self.assertNotIn('rm -rf "$APP_DIR"', self.source)
 
+    def test_rebuild_preserves_the_installed_apps_signing_identity(self) -> None:
+        preserve_at = self.source.index(
+            'if [ -z "$SELECTED_SIGNING_IDENTITY" ] && [ -d "$APP_DIR" ]'
+        )
+        fallback_at = self.source.index(
+            'if [ -z "$SELECTED_SIGNING_IDENTITY" ]; then',
+            preserve_at,
+        )
+
+        self.assertLess(preserve_at, fallback_at)
+        self.assertIn(
+            '--extract-certificates="$TXN_DIR/installed-cert"',
+            self.source[preserve_at:fallback_at],
+        )
+        self.assertIn(
+            '"$SHASUM" -a 1 "$TXN_DIR/installed-cert0"',
+            self.source[preserve_at:fallback_at],
+        )
+        self.assertIn(
+            'SIGNING_IDENTITY=${SIGNING_IDENTITY:-}',
+            self.source,
+        )
+
+    def test_launch_retries_after_a_transient_launch_services_failure(self) -> None:
+        committed_at = self.source.index("COMMITTED=1")
+        retry_at = self.source.index('while ! "$OPEN" "$APP_DIR"; do')
+        failure_at = self.source.index(
+            'fail "installed app but could not launch it: $APP_DIR"'
+        )
+
+        self.assertLess(committed_at, retry_at)
+        self.assertLess(retry_at, failure_at)
+        self.assertIn('"$SLEEP" 0.5', self.source[retry_at:])
+
     def test_failed_compile_preserves_the_existing_app(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app_parent = Path(tmp)

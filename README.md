@@ -59,7 +59,9 @@ Or build, sign, install, and launch the app under `$HOME/Applications`:
 The build is compiled and signed in a unique staging directory. An existing
 installed bundle remains intact until staging succeeds. The available Apple
 Development identity is used when present; otherwise the bundle is signed
-ad hoc.
+ad hoc. Rebuilds preserve the installed app's signing identity so macOS
+permissions remain valid. To select a different certificate deliberately, run
+`SIGNING_IDENTITY=APPLE_DEVELOPMENT_CERT_SHA1 ./build_app.sh`.
 
 The first time the helper controls Flow, macOS may require Automation or
 Accessibility permission. For the installed app, add

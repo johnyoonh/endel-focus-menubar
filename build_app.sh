@@ -19,8 +19,10 @@ PKILL=${PKILL:-/usr/bin/pkill}
 PLUTIL=${PLUTIL:-/usr/bin/plutil}
 RM=${RM:-/bin/rm}
 SECURITY=${SECURITY:-/usr/bin/security}
+SHASUM=${SHASUM:-/usr/bin/shasum}
 SLEEP=${SLEEP:-/bin/sleep}
 SWIFTC=${SWIFTC:-/usr/bin/swiftc}
+SIGNING_IDENTITY=${SIGNING_IDENTITY:-}
 
 fail() {
   printf 'build_app.sh: %s\n' "$*" >&2
@@ -159,12 +161,33 @@ PLIST
 [ -x "$CANDIDATE_MACOS/$EXECUTABLE_NAME" ] ||
   fail "compiler did not produce an executable"
 
-SIGNING_IDENTITY="$(
-  "$SECURITY" find-identity -v -p codesigning 2>/dev/null |
-    "$AWK" '/Apple Development/ { print $2; exit }'
-)"
-if [ -n "$SIGNING_IDENTITY" ]; then
-  "$CODESIGN" --force --sign "$SIGNING_IDENTITY" "$CANDIDATE_APP" >/dev/null
+SELECTED_SIGNING_IDENTITY=$SIGNING_IDENTITY
+if [ -z "$SELECTED_SIGNING_IDENTITY" ] && [ -d "$APP_DIR" ]; then
+  if "$CODESIGN" -d \
+       --extract-certificates="$TXN_DIR/installed-cert" \
+       "$APP_DIR" >/dev/null 2>&1 &&
+     [ -f "$TXN_DIR/installed-cert0" ]; then
+    SELECTED_SIGNING_IDENTITY="$(
+      "$SHASUM" -a 1 "$TXN_DIR/installed-cert0" |
+        "$AWK" '{ print toupper($1); exit }'
+    )"
+  else
+    installed_signature="$("$CODESIGN" -d --verbose=4 "$APP_DIR" 2>&1 || true)"
+    if printf '%s\n' "$installed_signature" |
+         "$AWK" '/^Signature=adhoc$/ { found=1 } END { exit !found }'; then
+      SELECTED_SIGNING_IDENTITY=-
+    fi
+  fi
+fi
+if [ -z "$SELECTED_SIGNING_IDENTITY" ]; then
+  SELECTED_SIGNING_IDENTITY="$(
+    "$SECURITY" find-identity -v -p codesigning 2>/dev/null |
+      "$AWK" '/Apple Development/ { print $2; exit }'
+  )"
+fi
+
+if [ -n "$SELECTED_SIGNING_IDENTITY" ]; then
+  "$CODESIGN" --force --sign "$SELECTED_SIGNING_IDENTITY" "$CANDIDATE_APP" >/dev/null
 else
   "$CODESIGN" --force --sign - "$CANDIDATE_APP" >/dev/null
 fi
@@ -195,5 +218,11 @@ fi
 "$MV" "$CANDIDATE_APP" "$APP_DIR"
 COMMITTED=1
 
-"$OPEN" "$APP_DIR"
+launch_attempt=1
+while ! "$OPEN" "$APP_DIR"; do
+  [ "$launch_attempt" -lt 3 ] ||
+    fail "installed app but could not launch it: $APP_DIR"
+  launch_attempt=$((launch_attempt + 1))
+  "$SLEEP" 0.5
+done
 printf '%s\n' "$APP_DIR"
