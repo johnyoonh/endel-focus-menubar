@@ -592,7 +592,11 @@ private final class TaskForgeStore {
         )
     }
 
-    static func createTask(from proposal: ValidatedTaskProposal, inProgress: Bool) throws -> TaskForgeTask {
+    static func createTask(
+        from proposal: ValidatedTaskProposal,
+        inProgress: Bool,
+        preferUndated: Bool? = nil
+    ) throws -> TaskForgeTask {
         let title = normalizedTaskTitle(proposal.title)
         guard !title.isEmpty else {
             throw NSError(
@@ -613,7 +617,10 @@ private final class TaskForgeStore {
             lines = []
         }
 
-        let insertionIndex = taskInsertionIndex(in: lines, preferUndated: !inProgress)
+        let insertionIndex = taskInsertionIndex(
+            in: lines,
+            preferUndated: preferUndated ?? !inProgress
+        )
         lines.insert(taskLine, at: insertionIndex)
         try lines.joined(separator: "\n").write(to: targetURL, atomically: true, encoding: .utf8)
 
@@ -943,10 +950,10 @@ private final class PromptController: NSWindowController, NSWindowDelegate, NSTa
     private var sortColumn: TaskPickerSortColumn = .priority
     private var sortAscending = true
     private var isEvaluating = false
-    private var completion: ((FocusConfig?) -> Void)?
+    private var completion: ((FocusConfig?) -> Bool)?
     var closeHandler: (() -> Void)?
 
-    convenience init(tasks: [TaskForgeTask], completion: @escaping (FocusConfig?) -> Void) {
+    convenience init(tasks: [TaskForgeTask], completion: @escaping (FocusConfig?) -> Bool) {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 620, height: 510),
             styleMask: [.titled, .closable],
@@ -1122,7 +1129,7 @@ private final class PromptController: NSWindowController, NSWindowDelegate, NSTa
 
     @objc private func cancel() {
         guard !isEvaluating else { return }
-        completion?(nil)
+        _ = completion?(nil)
         close()
     }
 
@@ -1409,13 +1416,13 @@ private final class PromptController: NSWindowController, NSWindowDelegate, NSTa
         )
 
         if result.shouldStartNow {
-            createTaskAndCompleteStart(proposal: activeProposal, focus: focus, rest: rest, rounds: rounds, inProgress: true)
+            createTaskAndCompleteStart(proposal: activeProposal, focus: focus, rest: rest, rounds: rounds)
             return
         }
 
         switch askLaterDecision(reason: result.reason, proposal: laterProposal) {
         case .alertFirstButtonReturn:
-            createTaskAndCompleteStart(proposal: activeProposal, focus: focus, rest: rest, rounds: rounds, inProgress: true)
+            createTaskAndCompleteStart(proposal: activeProposal, focus: focus, rest: rest, rounds: rounds)
         default:
             createTaskAndClose(proposal: laterProposal, inProgress: false)
         }
@@ -1430,7 +1437,7 @@ private final class PromptController: NSWindowController, NSWindowDelegate, NSTa
                 fallbackEstimateMinutes: focus,
                 forceInbox: true
             )
-            createTaskAndCompleteStart(proposal: proposal, focus: focus, rest: rest, rounds: rounds, inProgress: true)
+            createTaskAndCompleteStart(proposal: proposal, focus: focus, rest: rest, rounds: rounds)
         default:
             return
         }
@@ -1450,16 +1457,20 @@ private final class PromptController: NSWindowController, NSWindowDelegate, NSTa
         statusLabel.isHidden = !evaluating
     }
 
-    private func createTaskAndCompleteStart(proposal: ValidatedTaskProposal, focus: Int, rest: Int, rounds: Int, inProgress: Bool) {
+    private func createTaskAndCompleteStart(proposal: ValidatedTaskProposal, focus: Int, rest: Int, rounds: Int) {
         do {
-            let taskForgeTask = try TaskForgeStore.createTask(from: proposal, inProgress: inProgress)
+            let taskForgeTask = try TaskForgeStore.createTask(
+                from: proposal,
+                inProgress: false,
+                preferUndated: false
+            )
             completeStart(
                 taskName: proposal.title,
                 focus: focus,
                 rest: rest,
                 rounds: rounds,
                 taskForgeTask: taskForgeTask,
-                markTaskInProgressOnStart: false
+                markTaskInProgressOnStart: true
             )
         } catch {
             showMessage(title: "Could not create TaskForge task", message: error.localizedDescription)
@@ -1483,7 +1494,7 @@ private final class PromptController: NSWindowController, NSWindowDelegate, NSTa
         taskForgeTask: TaskForgeTask,
         markTaskInProgressOnStart: Bool
     ) {
-        completion?(FocusConfig(
+        let shouldClose = completion?(FocusConfig(
             taskName: taskName,
             focusMinutes: focus,
             breakMinutes: rest,
@@ -1494,8 +1505,10 @@ private final class PromptController: NSWindowController, NSWindowDelegate, NSTa
             taskNotesPath: taskForgeTask.taskNotesPath,
             sessionId: UUID().uuidString,
             markTaskInProgressOnStart: markTaskInProgressOnStart
-        ))
-        close()
+        )) ?? false
+        if shouldClose {
+            close()
+        }
     }
 
     private func evaluateInboxTask(taskName: String, focus: Int, rest: Int, rounds: Int) throws -> TaskEvaluationResult {
@@ -1938,10 +1951,6 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.mainMenu = mainMenu
     }
 
-    func applicationWillTerminate(_ notification: Notification) {
-        closeFlowIfRunning(reason: "helper terminating")
-    }
-
     private func rebuildMenu() {
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "Start Flow Session...", action: #selector(openPrompt), keyEquivalent: "s"))
@@ -2029,21 +2038,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         setupStandardEditMenu()
         let tasks = TaskForgeStore.loadOpenTasks()
         promptController = PromptController(tasks: tasks) { [weak self] config in
-            guard let self, let config else { return }
-            self.config = config
-            self.round = 1
-            self.phase = .focus
-            self.lastKnownTaskName = config.taskName
-            self.loggedFocusRounds = []
-            if config.markTaskInProgressOnStart {
-                self.markSelectedTaskInProgress(config)
-            }
-            self.remainingSeconds = config.focusMinutes * 60
-            self.phaseTotalSeconds = self.remainingSeconds
-            self.persistSessionSnapshot()
-            self.updateStatusTitle()
-            self.startLocalCountdown()
-            self.startFlow(config)
+            guard let self else { return false }
+            guard let config else { return true }
+            return self.startSession(config)
         }
         promptController?.closeHandler = { [weak self] in
             self?.promptController = nil
@@ -2056,6 +2053,25 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openFlow() {
         NSWorkspace.shared.open(URL(fileURLWithPath: "/Applications/Flow.app"))
+    }
+
+    private func startSession(_ config: FocusConfig) -> Bool {
+        guard startFlow(config) else { return false }
+
+        self.config = config
+        round = 1
+        phase = .focus
+        lastKnownTaskName = config.taskName
+        loggedFocusRounds = []
+        if config.markTaskInProgressOnStart {
+            markSelectedTaskInProgress(config)
+        }
+        remainingSeconds = config.focusMinutes * 60
+        phaseTotalSeconds = remainingSeconds
+        persistSessionSnapshot()
+        updateStatusTitle()
+        startLocalCountdown()
+        return true
     }
 
     @objc private func stopCountdown() {
@@ -2201,29 +2217,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func quit() {
-        closeFlowIfRunning(reason: "quit menu")
         NSApp.terminate(nil)
-    }
-
-    private func closeFlowIfRunning(reason: String) {
-        guard let flow = runningFlowApplication() else {
-            log("quit: Flow is not running (\(reason))")
-            return
-        }
-
-        log("quit: closing Flow (\(reason))")
-        if !flow.terminate() {
-            log("quit: Flow did not accept terminate request")
-        }
-
-        let deadline = Date().addingTimeInterval(2.0)
-        while !flow.isTerminated && Date() < deadline {
-            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
-        }
-
-        guard !flow.isTerminated else { return }
-        log("quit: force terminating Flow")
-        flow.forceTerminate()
     }
 
     private func runningFlowApplication() -> NSRunningApplication? {
@@ -3028,18 +3022,19 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         mouth.stroke()
     }
 
-    private func startFlow(_ config: FocusConfig) {
+    private func startFlow(_ config: FocusConfig) -> Bool {
         guard runFlowCommand("setTitle to \"\(appleScriptEscaped(config.taskName))\"") != nil else {
             showError(message: "Could not set Flow session title.")
-            return
+            return false
         }
 
         guard runFlowCommand("start") != nil else {
             showError(message: "Could not start or resume Flow session.")
-            return
+            return false
         }
 
         log("flow: started session title=\(config.taskName)")
+        return true
     }
 
     private func runFlowCommand(_ command: String) -> String? {

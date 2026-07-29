@@ -22,6 +22,14 @@ TASK_NOTES_RE = re.compile(r"\[\[(10_journal/TaskNotes/[^\]|]+)")
 DUE_DATE_RE = re.compile(r"📅\s*(\d{4}-\d{2}-\d{2})")
 DUE_TIME_RE = re.compile(r"⏰\s*(\d{1,2})(?::(\d{2}))?\s*(AM|PM)", re.I)
 TAG_RE = re.compile(r"(?<!\w)#([A-Za-z0-9][A-Za-z0-9_/-]*)")
+SYNCHRONOUS_RE = re.compile(
+    r"\b(?:call(?:s|ing|ed)?|zoom|meet(?:s|ing|ings)?|recordings?|interview(?:s|ing)?)\b",
+    re.I,
+)
+SYNCHRONOUS_NEGATION_RE = re.compile(
+    r"\b(?:no|without)\s+(?:phone\s+)?calls?\b|\bno\s+meetings?\b",
+    re.I,
+)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -82,12 +90,23 @@ def parse_due_time(line: str) -> str | None:
 def parse_estimate(value: str | None) -> int:
     if not value:
         return 25
-    match = re.search(r"(\d+)", value)
-    if not match:
-        return 25
-    minutes = int(match.group(1))
-    if "h" in value.lower() and "m" not in value.lower():
-        minutes *= 60
+    duration_parts = re.findall(
+        r"(\d+(?:\.\d+)?)\s*(hours?|hrs?|h|minutes?|mins?|m)(?![A-Za-z])",
+        value,
+        flags=re.I,
+    )
+    if duration_parts:
+        minutes = round(
+            sum(
+                float(amount) * (60 if unit.lower().startswith("h") else 1)
+                for amount, unit in duration_parts
+            )
+        )
+    else:
+        match = re.search(r"\d+(?:\.\d+)?", value)
+        if not match:
+            return 25
+        minutes = round(float(match.group(0)))
     return min(240, max(5, minutes))
 
 
@@ -174,25 +193,71 @@ def min_date_key(*dates: str) -> int:
 
 def load_windows(path: Path) -> list[Window]:
     data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, list):
+        raise ValueError("windows JSON must be an array")
+
     windows: list[Window] = []
-    for item in data:
+    for index, item in enumerate(data, start=1):
+        if not isinstance(item, dict):
+            raise ValueError(f"window {index} must be an object")
+
+        required: dict[str, str] = {}
+        for field in ("title", "start", "end"):
+            value = item.get(field)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(
+                    f"window {index} field '{field}' must be a non-empty string"
+                )
+            required[field] = value.strip()
+
+        try:
+            start = parse_datetime(required["start"])
+        except ValueError as exc:
+            raise ValueError(f"window {index} field 'start': {exc}") from exc
+        try:
+            end = parse_datetime(required["end"])
+        except ValueError as exc:
+            raise ValueError(f"window {index} field 'end': {exc}") from exc
+        if end <= start:
+            raise ValueError(f"window {index} end must be after start")
+
+        for field in ("kind", "connectivity", "context"):
+            if field in item and not isinstance(item[field], str):
+                raise ValueError(f"window {index} field '{field}' must be a string")
+
         windows.append(
             Window(
-                title=str(item["title"]),
-                start=parse_datetime(str(item["start"])),
-                end=parse_datetime(str(item["end"])),
-                kind=str(item.get("kind", "transition")).lower(),
-                connectivity=str(item.get("connectivity", "unknown")).lower(),
-                context=str(item.get("context", "")),
+                title=required["title"],
+                start=start,
+                end=end,
+                kind=item.get("kind", "transition").strip().lower(),
+                connectivity=item.get("connectivity", "unknown").strip().lower(),
+                context=item.get("context", "").strip(),
             )
         )
     return windows
 
 
+def task_incompatibility_reasons(task: Task, window: Window) -> list[str]:
+    text = " ".join([task.title, task.list_name, " ".join(task.tags), task.task_notes_text]).lower()
+    reasons: list[str] = []
+    has_call_requirement = SYNCHRONOUS_RE.search(text) is not None
+    call_is_negated = SYNCHRONOUS_NEGATION_RE.search(text) is not None
+    if has_call_requirement and not call_is_negated:
+        reasons.append("requires synchronous conversation")
+    if window.kind == "flight" and any(
+        word in text for word in ("upload", "download", "video", "large file")
+    ):
+        reasons.append("may need stronger connectivity than in-flight Wi-Fi")
+    return reasons
+
+
 def score_task(task: Task, window: Window) -> tuple[float, list[str]]:
     text = " ".join([task.title, task.list_name, " ".join(task.tags), task.task_notes_text]).lower()
     score = 0.45
-    reasons: list[str] = []
+    reasons = task_incompatibility_reasons(task, window)
+    if reasons:
+        return 0.0, reasons
 
     if task.estimate_minutes <= max(5, window.minutes - 5):
         score += 0.15
@@ -201,11 +266,6 @@ def score_task(task: Task, window: Window) -> tuple[float, list[str]]:
         score -= 0.35
         reasons.append("estimate exceeds the transition window")
 
-    has_call_requirement = any(word in text for word in ("call", "phone call", "zoom", "meet", "recording", "interview"))
-    call_is_negated = any(phrase in text for phrase in ("no call", "no calls", "without calls", "no meeting"))
-    if has_call_requirement and not call_is_negated:
-        score -= 0.35
-        reasons.append("requires synchronous conversation")
     if any(
         word in text
         for word in (
@@ -254,9 +314,6 @@ def score_task(task: Task, window: Window) -> tuple[float, list[str]]:
         if any(word in text for word in ("deep", "write", "draft", "code", "review", "plan", "design")):
             score += 0.28
             reasons.append("good uninterrupted flight task")
-        if any(word in text for word in ("upload", "download", "video", "large file")):
-            score -= 0.20
-            reasons.append("may need stronger connectivity than in-flight Wi-Fi")
 
     if task.metadata.get("status", "").lower() == "in progress":
         score += 0.08
@@ -277,6 +334,14 @@ def proposal_id(task: Task, window: Window) -> str:
     return hashlib.sha1(seed.encode("utf-8")).hexdigest()[:12]
 
 
+def safe_wiki_path(path: Path) -> str:
+    try:
+        journal_index = path.parts.index("10_journal")
+    except ValueError:
+        return path.name
+    return Path(*path.parts[journal_index:]).as_posix()
+
+
 def build_proposals(tasks: list[Task], windows: list[Window], min_confidence: float) -> list[dict[str, Any]]:
     proposals: list[dict[str, Any]] = []
     used_sources: set[str] = set()
@@ -284,6 +349,8 @@ def build_proposals(tasks: list[Task], windows: list[Window], min_confidence: fl
         ranked: list[tuple[float, Task, list[str]]] = []
         for task in tasks:
             if task.source_ref in used_sources:
+                continue
+            if task_incompatibility_reasons(task, window):
                 continue
             confidence, reasons = score_task(task, window)
             ranked.append((confidence, task, reasons))
@@ -297,6 +364,7 @@ def build_proposals(tasks: list[Task], windows: list[Window], min_confidence: fl
         duration = min(task.estimate_minutes, max(5, window.minutes - 5))
         end = min(window.end, window.start + dt.timedelta(minutes=duration))
         marker = f"transition-scheduler:{proposal_id(task, window)}"
+        safe_source_ref = f"{safe_wiki_path(task.file_path)}:{task.line_number}"
         proposals.append(
             {
                 "id": proposal_id(task, window),
@@ -311,15 +379,19 @@ def build_proposals(tasks: list[Task], windows: list[Window], min_confidence: fl
                 "task": {
                     "title": task.title,
                     "list": task.list_name,
-                    "file": str(task.file_path),
+                    "file": safe_wiki_path(task.file_path),
                     "line": task.line_number,
                     "estimate_minutes": task.estimate_minutes,
-                    "task_notes": str(task.task_notes_path) if task.task_notes_path else None,
+                    "task_notes": (
+                        safe_wiki_path(task.task_notes_path)
+                        if task.task_notes_path
+                        else None
+                    ),
                 },
                 "dedupe_marker": marker,
                 "description": (
                     f"TaskForge transition work block.\n"
-                    f"Source: {task.source_ref}\n"
+                    f"Source: {safe_source_ref}\n"
                     f"Window: {window.title}\n"
                     f"Connectivity: {window.connectivity}\n"
                     f"Confidence: {confidence:.2f}\n"
@@ -365,21 +437,30 @@ def existing_marker(calendar: str, proposal: dict[str, Any]) -> bool:
     marker = str(proposal["dedupe_marker"])
     start = parse_datetime(str(proposal["start"])) - dt.timedelta(days=1)
     end = parse_datetime(str(proposal["end"])) + dt.timedelta(days=1)
-    result = subprocess.run(
-        [
-            "gcalcli",
-            "search",
-            marker,
-            start.date().isoformat(),
-            end.date().isoformat(),
-            "--calendar",
-            calendar,
-            "--nocolor",
-        ],
-        check=False,
-        text=True,
-        capture_output=True,
-    )
+    try:
+        result = subprocess.run(
+            [
+                "gcalcli",
+                "search",
+                marker,
+                start.date().isoformat(),
+                end.date().isoformat(),
+                "--calendar",
+                calendar,
+                "--nocolor",
+            ],
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError("gcalcli is required to apply proposals") from exc
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip()
+        message = f"gcalcli search failed with exit code {result.returncode}"
+        if detail:
+            message += f": {detail}"
+        raise RuntimeError(message)
     return "No Events Found" not in result.stdout
 
 

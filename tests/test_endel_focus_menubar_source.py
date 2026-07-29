@@ -68,5 +68,78 @@ class AccessibilityInstructionRegressionTests(unittest.TestCase):
         self.assertIn("When using the installed app, enable Endel Focus Menu Bar.app instead", self.source)
 
 
+class HelperShutdownRegressionTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.source = SOURCE.read_text(encoding="utf-8")
+
+    def test_quitting_helper_does_not_terminate_flow(self) -> None:
+        self.assertNotIn("closeFlowIfRunning", self.source)
+        self.assertNotIn("flow.terminate()", self.source)
+        self.assertNotIn("flow.forceTerminate()", self.source)
+        self.assertNotIn("applicationWillTerminate", self.source)
+
+    def test_helper_quit_action_remains_available(self) -> None:
+        self.assertIn("@objc private func quit()", self.source)
+        self.assertIn("NSApp.terminate(nil)", self.source)
+
+
+class SessionStartTransactionRegressionTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.source = SOURCE.read_text(encoding="utf-8")
+
+    def test_flow_starts_before_local_or_taskforge_state_is_committed(self) -> None:
+        start_session = self.source.index(
+            "private func startSession(_ config: FocusConfig) -> Bool"
+        )
+        start_flow = self.source.index(
+            "guard startFlow(config) else { return false }",
+            start_session,
+        )
+        commit_config = self.source.index("self.config = config", start_session)
+        mark_task = self.source.index(
+            "markSelectedTaskInProgress(config)",
+            start_session,
+        )
+        persist_snapshot = self.source.index(
+            "persistSessionSnapshot()",
+            start_session,
+        )
+        start_countdown = self.source.index(
+            "startLocalCountdown()",
+            start_session,
+        )
+
+        self.assertLess(start_flow, commit_config)
+        self.assertLess(start_flow, mark_task)
+        self.assertLess(start_flow, persist_snapshot)
+        self.assertLess(start_flow, start_countdown)
+
+    def test_new_immediate_task_stays_open_until_flow_starts(self) -> None:
+        create_start = self.source.index(
+            "private func createTaskAndCompleteStart("
+        )
+        next_method = self.source.index(
+            "private func createTaskAndClose(",
+            create_start,
+        )
+        method = self.source[create_start:next_method]
+        self.assertIn("inProgress: false", method)
+        self.assertIn("preferUndated: false", method)
+        self.assertIn("markTaskInProgressOnStart: true", method)
+
+    def test_prompt_closes_only_after_successful_start(self) -> None:
+        self.assertIn(
+            "private var completion: ((FocusConfig?) -> Bool)?",
+            self.source,
+        )
+        self.assertIn("if shouldClose {\n            close()\n        }", self.source)
+        self.assertIn(
+            "private func startFlow(_ config: FocusConfig) -> Bool",
+            self.source,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

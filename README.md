@@ -1,67 +1,152 @@
-# Flow Focus Menu Bar Helper
+# Endel Focus Menu Bar
 
-This is a small Swift menu-bar helper for starting Flow focus sessions with:
+Endel Focus Menu Bar is a native macOS menu-bar companion for starting and
+tracking Flow focus sessions from TaskForge tasks. It is intended for macOS
+users who already use Flow and optionally keep TaskForge tasks in an Obsidian
+vault.
 
-- task name
-- focus minutes
-- break minutes
-- number of sessions
+This repository owns the menu-bar runtime, Flow automation, TaskForge picker,
+Pomodoro logging, and travel-transition scheduler. It does not own the Flow
+timer engine, the TaskForge vault format, Obsidian, the task-evaluation
+Shortcut, or calendar synchronization. Despite the historical Endel name, the
+current timer integration targets Flow.
 
-The start dialog loads open TaskForge tasks from the Obsidian vault and lets you search/select one. The top text field filters the task list and also supplies the title for `Inbox Task`. Use `Inbox Task` to evaluate that typed text with the `Evaluate Task Decision` shortcut before saving it to TaskForge. Evaluation runs in the background with a 45-second timeout. If the decision is `now`, or you choose `Start Anyway`, it is saved to Inbox with `[status:: In Progress]` and an estimate matching the focus minutes. If you choose `Do Later`, the app validates the LLM's proposed list, tags, estimate, due date, and scheduled date, then writes to the recommended existing TaskForge list or falls back to `inbox.md`.
+## Prerequisites
 
-Hover over a TaskForge row to see its full task description. Double-click a row to open its source note at the task line in Obsidian; this uses the Obsidian Advanced URI community plugin. Use the checkbox beside a task to mark it complete or open again. Checked tasks stay visible until you close the picker so you can undo the action, then disappear the next time the picker is opened.
+- macOS 13 or later.
+- Apple's Swift toolchain, available through Xcode or Xcode Command Line Tools.
+- Flow installed at `/Applications/Flow.app`.
+- For TaskForge integration, an Obsidian vault containing
+  `10_journal/TaskForge`.
+- For opening task rows in Obsidian, the Advanced URI community plugin.
+- For `Inbox Task` evaluation, the `Evaluate Task Decision` Shortcut and its
+  executable TaskForge wrapper.
+- For the transition scheduler, `uv`; `gcalcli` is needed only with `--apply`.
 
-Run it with:
+## Wiki path
+
+Set `TASKFORGE_WIKI_PATH` when the vault is not in a default location. The app
+uses the environment variable first, then `$HOME/wiki` when that directory
+contains `10_journal/TaskForge`, and otherwise `$HOME/Documents/wiki`.
+
+For shell commands, resolve the same path once so an unset environment variable
+never becomes an empty `--wiki-path` argument:
 
 ```sh
-chmod +x run.sh
+if [ -n "${TASKFORGE_WIKI_PATH:-}" ]; then
+  WIKI_PATH="$TASKFORGE_WIKI_PATH"
+elif [ -d "$HOME/wiki/10_journal/TaskForge" ]; then
+  WIKI_PATH="$HOME/wiki"
+else
+  WIKI_PATH="$HOME/Documents/wiki"
+fi
+```
+
+## Run or install
+
+Run directly through the Swift interpreter during development:
+
+```sh
 ./run.sh
 ```
 
-Build the app bundle under `~/Applications` with:
+Or build, sign, install, and launch the app under `$HOME/Applications`:
 
 ```sh
-chmod +x build_app.sh
 ./build_app.sh
-open "$HOME/Applications/Endel Focus Menu Bar.app"
 ```
 
-The first time it controls Flow, macOS may require Automation or Accessibility permission for `Endel Focus Menu Bar`. For Accessibility, add `~/Applications/Endel Focus Menu Bar.app` under **System Settings → Privacy & Security → Accessibility**. Enable Terminal or Swift only when running the helper through `./run.sh`.
+The build is compiled and signed in a unique staging directory. An existing
+installed bundle remains intact until staging succeeds. The available Apple
+Development identity is used when present; otherwise the bundle is signed
+ad hoc.
 
-The helper sets Flow's session title from the selected task, then starts or resumes Flow through its AppleScript API.
+The first time the helper controls Flow, macOS may require Automation or
+Accessibility permission. For the installed app, add
+`$HOME/Applications/Endel Focus Menu Bar.app` under **System Settings → Privacy
+& Security → Accessibility**. Enable Terminal or Swift only when launching
+through `./run.sh`.
 
-The menu-bar item shows a small circular progress ring and the remaining time. Hover it to see the current phase and session count.
+## Use the menu-bar helper
 
-Use `Refresh State` or `Cmd+R` from the menu to resync the menu-bar countdown from Flow. The helper also attempts this refresh on launch.
+`Start Flow Session...` selects the task name, focus minutes, break minutes,
+and number of sessions. The picker loads open TaskForge tasks, supports search,
+shows full descriptions in tooltips, and can complete or reopen a task.
+Double-clicking a task opens its source line in Obsidian.
 
-Display options in the menu:
+`Inbox Task` sends typed text to the external `Evaluate Task Decision`
+workflow. A task chosen for now is saved with `[status:: In Progress]`; a task
+deferred until later is validated and written to the recommended existing
+TaskForge list or `inbox.md`.
 
-- `Show Ring`
-- `Show Task Name`
-- `Show Time`
+The status item can show a progress ring, task name, and remaining time.
+`Refresh State` (`Cmd+R`) resynchronizes it with Flow. `Pause Flow Session`,
+`Reset Flow Cycle`, and `Reset Menu Countdown` control the timer or local
+display as their names indicate. `Start at Login` manages the bundled app as a
+macOS login item.
 
-At least one display option must remain enabled. The ring is green during focus and orange during breaks.
+The global shortcut `Ctrl+Option+Command+F` opens the picker while idle. During
+an assigned session, it pauses Flow and opens the menu. `Set Session
+Progress...` corrects a running timer when the total session count is not
+available from Flow.
 
-Use `Start at Login` to register or unregister the bundled app as a macOS login item.
-
-`Reset Menu Countdown` only clears the helper display. `Pause Flow Session` sends Flow's pause command. `Reset Flow Cycle` sends Flow's reset command and clears the helper display.
-
-The global shortcut `Ctrl+Option+Command+F` opens the TaskForge picker when no session is assigned. During an assigned session, it pauses Flow and opens the menu-bar menu.
-
-`Set Session Progress...` lets you correct an already-running timer when Endel does not expose total session count. New timers started by the helper persist their task and session count across helper restarts.
-
-Completed focus rounds are appended to:
+Completed focus rounds are appended beneath the resolved wiki path:
 
 ```text
-${TASKFORGE_WIKI_PATH:-$HOME/wiki}/99_meta/tasks/pomodoro-sessions.jsonl
+$WIKI_PATH/99_meta/tasks/pomodoro-sessions.jsonl
 ```
 
-Plan travel transition work blocks with:
+## Plan transition work
+
+Copy and edit `examples/transition-windows.example.json`, keeping an explicit
+timezone offset on every start and end time. Preview proposals without changing
+the calendar:
 
 ```sh
-uv run python scripts/transition_scheduler.py path/to/windows.json --wiki-path "$TASKFORGE_WIKI_PATH"
+uv run --python 3.12 python scripts/transition_scheduler.py \
+  path/to/windows.json \
+  --wiki-path "$WIKI_PATH"
 ```
 
-The scheduler requires an explicit windows JSON file so it cannot silently reuse a stale itinerary. Copy and update `examples/transition-windows.example.json` for the trip you are planning. It reads open TaskForge tasks and linked TaskNotes, scores them against ride, airport, and in-flight windows, and prints JSON proposals. Use `--apply --calendar Gmail` to import high-confidence blocks through `gcalcli` as private ICS events. The earlier `--windows-json path/to/windows.json` form remains available as a compatibility alias.
+The scheduler reads open TaskForge tasks and linked TaskNotes, scores them for
+ride, airport, and in-flight windows, and prints JSON proposals. The explicit
+windows file prevents accidental reuse of an old itinerary. The compatibility
+form `--windows-json path/to/windows.json` is also supported.
 
-Builds are signed with the available Apple Development identity when present. After switching from the earlier ad-hoc signature, macOS may ask you to add Accessibility permission once more; future rebuilds should keep the same signing identity.
+After reviewing the preview, import high-confidence blocks as private ICS
+events:
+
+```sh
+uv run --python 3.12 python scripts/transition_scheduler.py \
+  path/to/windows.json \
+  --wiki-path "$WIKI_PATH" \
+  --apply \
+  --calendar Gmail
+```
+
+`--apply` changes the selected calendar and requires an authenticated `gcalcli`
+installation.
+
+## Local validation
+
+Run the Python regression suite:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 \
+  uv run --python 3.12 python -m unittest discover -v
+```
+
+Check shell syntax and type-check the Swift app for its minimum macOS target:
+
+```sh
+sh -n run.sh build_app.sh
+/usr/bin/swiftc \
+  -typecheck \
+  -target "$(uname -m)-apple-macosx13.0" \
+  EndelFocusMenuBar.swift \
+  -framework AppKit \
+  -framework ApplicationServices \
+  -framework Carbon \
+  -framework ServiceManagement \
+  -framework Vision
+```
