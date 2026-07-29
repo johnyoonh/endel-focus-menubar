@@ -1,0 +1,26 @@
+[
+  {
+    "title": "Ride to airport",
+    "start": "2030-01-15T09:00:00-06:00",
+    "end": "2030-01-15T09:45:00-06:00",
+    "kind": "lyft",
+    "connectivity": "phone",
+    "context": "Phone-friendly work only"
+  },
+  {
+    "title": "Airport buffer",
+    "start": "2030-01-15T09:45:00-06:00",
+    "end": "2030-01-15T11:15:00-06:00",
+    "kind": "airport",
+    "connectivity": "laptop",
+    "context": "Laptop work before boarding"
+  },
+  {
+    "title": "In-flight work",
+    "start": "2030-01-15T12:00:00-06:00",
+    "end": "2030-01-15T13:00:00-06:00",
+    "kind": "flight",
+    "connectivity": "wifi",
+    "context": "Avoid calls and large transfers"
+  }
+]

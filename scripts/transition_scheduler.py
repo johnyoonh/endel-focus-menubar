@@ -189,57 +189,6 @@ def load_windows(path: Path) -> list[Window]:
     return windows
 
 
-def default_trip_windows() -> list[Window]:
-    raw = [
-        {
-            "title": "Lyft: Home to DFW",
-            "start": "2026-06-16T13:15:00-05:00",
-            "end": "2026-06-16T14:15:00-05:00",
-            "kind": "lyft",
-            "connectivity": "phone",
-            "context": "ride to airport; phone-friendly only",
-        },
-        {
-            "title": "DFW airport buffer",
-            "start": "2026-06-16T14:15:00-05:00",
-            "end": "2026-06-16T15:45:00-05:00",
-            "kind": "airport",
-            "connectivity": "laptop",
-            "context": "airport waiting time before boarding",
-        },
-        {
-            "title": "AA 2810 in-flight Wi-Fi",
-            "start": "2026-06-16T16:45:00-05:00",
-            "end": "2026-06-16T17:35:00-07:00",
-            "kind": "flight",
-            "connectivity": "aa-wifi",
-            "context": "American Airlines Wi-Fi; laptop possible; avoid calls",
-        },
-        {
-            "title": "Lyft: SFO to Hotel des Arts",
-            "start": "2026-06-16T18:45:00-07:00",
-            "end": "2026-06-16T19:30:00-07:00",
-            "kind": "lyft",
-            "connectivity": "phone",
-            "context": "ride to hotel; phone-friendly only",
-        },
-        {
-            "title": "SFO return airport buffer",
-            "start": "2026-06-17T21:15:00-07:00",
-            "end": "2026-06-17T22:45:00-07:00",
-            "kind": "airport",
-            "connectivity": "laptop",
-            "context": "airport waiting time before return flight",
-        },
-    ]
-    tmp = Path(tempfile.mkstemp(suffix=".json")[1])
-    try:
-        tmp.write_text(json.dumps(raw), encoding="utf-8")
-        return load_windows(tmp)
-    finally:
-        tmp.unlink(missing_ok=True)
-
-
 def score_task(task: Task, window: Window) -> tuple[float, list[str]]:
     text = " ".join([task.title, task.list_name, " ".join(task.tags), task.task_notes_text]).lower()
     score = 0.45
@@ -450,16 +399,34 @@ def apply_proposals(calendar: str, proposals: list[dict[str, Any]]) -> list[dict
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Plan TaskForge work blocks for transition windows.")
+    parser.add_argument(
+        "windows_json",
+        type=Path,
+        nargs="?",
+        metavar="WINDOWS_JSON",
+        help="JSON array of transition windows to plan.",
+    )
     parser.add_argument("--wiki-path", default=os.environ.get("TASKFORGE_WIKI_PATH", "~/Documents/wiki"))
-    parser.add_argument("--windows-json", type=Path, help="JSON array of transition windows.")
+    parser.add_argument(
+        "--windows-json",
+        dest="legacy_windows_json",
+        type=Path,
+        help="Compatibility alias for positional WINDOWS_JSON.",
+    )
     parser.add_argument("--calendar", default="Gmail")
     parser.add_argument("--min-confidence", type=float, default=0.75)
     parser.add_argument("--apply", action="store_true", help="Import high-confidence private blocks with gcalcli.")
     parser.add_argument("--output", choices=["json", "ics"], default="json")
     args = parser.parse_args(argv)
 
+    if args.windows_json and args.legacy_windows_json:
+        parser.error("WINDOWS_JSON and --windows-json cannot be used together")
+    windows_path = args.windows_json or args.legacy_windows_json
+    if windows_path is None:
+        parser.error("WINDOWS_JSON is required")
+
     wiki_path = Path(args.wiki_path).expanduser()
-    windows = load_windows(args.windows_json) if args.windows_json else default_trip_windows()
+    windows = load_windows(windows_path)
     proposals = build_proposals(load_open_tasks(wiki_path), windows, args.min_confidence)
 
     if args.apply:

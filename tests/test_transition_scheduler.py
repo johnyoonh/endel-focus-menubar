@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import datetime as dt
+import io
 import json
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 from scripts import transition_scheduler as scheduler
@@ -26,7 +28,7 @@ class TransitionSchedulerTests(unittest.TestCase):
                     "- [ ] Draft flight essay [[10_journal/TaskNotes/Flight Draft]] [estimate:: 45m] #writing",
                     "- [ ] Join Zoom call with client [estimate:: 30m]",
                     "- [ ] Upload large video file [estimate:: 20m]",
-                    "- [ ] Finish overdue paper [estimate:: 25m] 📅 2026-06-16",
+                    "- [ ] Finish overdue paper [estimate:: 25m] 📅 2030-01-15",
                     "- [ ] Cancel credit card and review legal settlement [estimate:: 25m]",
                 ]
             ),
@@ -48,8 +50,8 @@ class TransitionSchedulerTests(unittest.TestCase):
             tasks = scheduler.load_open_tasks(Path(tmp))
         window = scheduler.Window(
             title="Lyft",
-            start=dt.datetime.fromisoformat("2026-06-16T13:15:00-05:00"),
-            end=dt.datetime.fromisoformat("2026-06-16T14:15:00-05:00"),
+            start=dt.datetime.fromisoformat("2030-01-15T09:00:00-06:00"),
+            end=dt.datetime.fromisoformat("2030-01-15T09:45:00-06:00"),
             kind="lyft",
             connectivity="phone",
             context="ride",
@@ -61,9 +63,9 @@ class TransitionSchedulerTests(unittest.TestCase):
         with self.make_wiki() as tmp:
             tasks = scheduler.load_open_tasks(Path(tmp))
         window = scheduler.Window(
-            title="AA Wi-Fi",
-            start=dt.datetime.fromisoformat("2026-06-16T16:45:00-05:00"),
-            end=dt.datetime.fromisoformat("2026-06-16T17:35:00-07:00"),
+            title="Flight Wi-Fi",
+            start=dt.datetime.fromisoformat("2030-01-15T12:00:00-06:00"),
+            end=dt.datetime.fromisoformat("2030-01-15T13:00:00-06:00"),
             kind="flight",
             connectivity="aa-wifi",
             context="flight",
@@ -75,9 +77,9 @@ class TransitionSchedulerTests(unittest.TestCase):
         with self.make_wiki() as tmp:
             tasks = scheduler.load_open_tasks(Path(tmp))
         window = scheduler.Window(
-            title="AA Wi-Fi",
-            start=dt.datetime.fromisoformat("2026-06-16T16:45:00-05:00"),
-            end=dt.datetime.fromisoformat("2026-06-16T17:35:00-07:00"),
+            title="Flight Wi-Fi",
+            start=dt.datetime.fromisoformat("2030-01-15T12:00:00-06:00"),
+            end=dt.datetime.fromisoformat("2030-01-15T13:00:00-06:00"),
             kind="flight",
             connectivity="aa-wifi",
             context="flight",
@@ -90,8 +92,8 @@ class TransitionSchedulerTests(unittest.TestCase):
     def test_ics_output_marks_blocks_private_and_dedupable(self) -> None:
         proposal = {
             "title": "Transition work: Reply",
-            "start": "2026-06-16T13:15:00-05:00",
-            "end": "2026-06-16T13:25:00-05:00",
+            "start": "2030-01-15T09:00:00-06:00",
+            "end": "2030-01-15T09:10:00-06:00",
             "description": "Marker: transition-scheduler:abc123",
             "dedupe_marker": "transition-scheduler:abc123",
         }
@@ -105,8 +107,8 @@ class TransitionSchedulerTests(unittest.TestCase):
                 [
                     {
                         "title": "Airport",
-                        "start": "2026-06-17T21:15:00-07:00",
-                        "end": "2026-06-17T22:45:00-07:00",
+                        "start": "2030-01-16T09:00:00-06:00",
+                        "end": "2030-01-16T10:30:00-06:00",
                         "kind": "airport",
                         "connectivity": "laptop",
                     }
@@ -120,6 +122,70 @@ class TransitionSchedulerTests(unittest.TestCase):
             path.unlink(missing_ok=True)
         self.assertEqual(windows[0].title, "Airport")
         self.assertEqual(windows[0].minutes, 90)
+
+    def test_cli_requires_an_explicit_windows_file(self) -> None:
+        stderr = io.StringIO()
+        with redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+            scheduler.main([])
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("WINDOWS_JSON is required", stderr.getvalue())
+
+    def test_cli_accepts_windows_file_as_primary_positional_argument(self) -> None:
+        with self.make_wiki() as tmp:
+            root = Path(tmp)
+            windows_path = root / "windows.json"
+            windows_path.write_text(
+                json.dumps(
+                    [
+                        {
+                            "title": "Ride window",
+                            "start": "2030-01-15T09:00:00-06:00",
+                            "end": "2030-01-15T09:30:00-06:00",
+                            "kind": "lyft",
+                            "connectivity": "phone",
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                result = scheduler.main([str(windows_path), "--wiki-path", str(root)])
+        self.assertEqual(result, 0)
+        self.assertEqual(json.loads(stdout.getvalue())["proposals"][0]["window_title"], "Ride window")
+
+    def test_cli_keeps_windows_json_flag_as_a_compatibility_alias(self) -> None:
+        with self.make_wiki() as tmp:
+            root = Path(tmp)
+            windows_path = root / "windows.json"
+            windows_path.write_text(
+                json.dumps(
+                    [
+                        {
+                            "title": "Airport buffer",
+                            "start": "2030-01-15T10:00:00-06:00",
+                            "end": "2030-01-15T11:00:00-06:00",
+                            "kind": "airport",
+                            "connectivity": "laptop",
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                result = scheduler.main(
+                    ["--windows-json", str(windows_path), "--wiki-path", str(root)]
+                )
+        self.assertEqual(result, 0)
+        self.assertEqual(json.loads(stdout.getvalue())["proposals"][0]["window_title"], "Airport buffer")
+
+    def test_cli_rejects_both_windows_file_forms(self) -> None:
+        stderr = io.StringIO()
+        with redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+            scheduler.main(["first.json", "--windows-json", "second.json"])
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("cannot be used together", stderr.getvalue())
 
 
 if __name__ == "__main__":

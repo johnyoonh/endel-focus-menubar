@@ -59,9 +59,9 @@ ${TASKFORGE_WIKI_PATH:-$HOME/wiki}/99_meta/tasks/pomodoro-sessions.jsonl
 Plan travel transition work blocks with:
 
 ```sh
-uv run python scripts/transition_scheduler.py --wiki-path "$TASKFORGE_WIKI_PATH"
+uv run python scripts/transition_scheduler.py path/to/windows.json --wiki-path "$TASKFORGE_WIKI_PATH"
 ```
 
-The scheduler reads open TaskForge tasks and linked TaskNotes, scores them against ride, airport, and in-flight windows, and prints JSON proposals. Use `--apply --calendar Gmail` to import high-confidence blocks through `gcalcli` as private ICS events. Pass `--windows-json path/to/windows.json` to plan a different trip.
+The scheduler requires an explicit windows JSON file so it cannot silently reuse a stale itinerary. Copy and update `examples/transition-windows.example.json` for the trip you are planning. It reads open TaskForge tasks and linked TaskNotes, scores them against ride, airport, and in-flight windows, and prints JSON proposals. Use `--apply --calendar Gmail` to import high-confidence blocks through `gcalcli` as private ICS events. The earlier `--windows-json path/to/windows.json` form remains available as a compatibility alias.
 
 Builds are signed with the available Apple Development identity when present. After switching from the earlier ad-hoc signature, macOS may ask you to add Accessibility permission once more; future rebuilds should keep the same signing identity.
