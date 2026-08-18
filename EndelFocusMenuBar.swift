@@ -271,6 +271,10 @@ private final class TaskForgeStore {
     static let tasksURL = URL(fileURLWithPath: "\(wikiPath)/10_journal/TaskForge")
     static let pomodoroLogURL = URL(fileURLWithPath: "\(wikiPath)/99_meta/tasks/pomodoro-sessions.jsonl")
     static let impromptuTasksURL = URL(fileURLWithPath: "\(wikiPath)/10_journal/TaskForge/inbox.md")
+    static let nudgeFeedbackRelativePath = "99_meta/system/task/scheduler/nudges/latest.md"
+    static let nudgeFeedbackURL = URL(fileURLWithPath: "\(wikiPath)/\(nudgeFeedbackRelativePath)")
+    static let wikiAutomationHelperURL = URL(fileURLWithPath: NSHomeDirectory())
+        .appendingPathComponent("Applications/Wiki Automation.app/Contents/MacOS/wiki-automation")
     static let evaluateTaskDecisionScriptURL = taskEvaluationScriptURL()
 
     private static let metadataPattern = try! NSRegularExpression(pattern: #"\[([A-Za-z0-9_-]+)::\s*([^\]]+)\]"#)
@@ -1955,6 +1959,16 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "Start Flow Session...", action: #selector(openPrompt), keyEquivalent: "s"))
         menu.addItem(NSMenuItem(title: "Refresh State", action: #selector(refreshStateFromFlow), keyEquivalent: "r"))
+        let feedbackItem = NSMenuItem(
+            title: "Edit Latest Nudge Feedback…",
+            action: #selector(openLatestNudgeFeedback),
+            keyEquivalent: ""
+        )
+        feedbackItem.isEnabled = FileManager.default.fileExists(atPath: TaskForgeStore.nudgeFeedbackURL.path)
+        if !feedbackItem.isEnabled {
+            feedbackItem.toolTip = "No editable nudge feedback note is available yet."
+        }
+        menu.addItem(feedbackItem)
         menu.addItem(NSMenuItem(title: "Set Session Progress...", action: #selector(openSessionProgress), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Reset Menu Countdown", action: #selector(stopCountdown), keyEquivalent: "x"))
         menu.addItem(NSMenuItem(title: "Pause Flow Session", action: #selector(pauseFlowSession), keyEquivalent: ""))
@@ -2053,6 +2067,29 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openFlow() {
         NSWorkspace.shared.open(URL(fileURLWithPath: "/Applications/Flow.app"))
+    }
+
+    @objc private func openLatestNudgeFeedback() {
+        guard FileManager.default.isExecutableFile(atPath: TaskForgeStore.wikiAutomationHelperURL.path) else {
+            NSSound.beep()
+            showMessage(
+                title: "Could not open nudge feedback",
+                message: "Wiki Automation is not installed, so the feedback note cannot be opened safely."
+            )
+            return
+        }
+        let process = Process()
+        process.executableURL = TaskForgeStore.wikiAutomationHelperURL
+        process.arguments = ["open-latest-nudge"]
+        var environment = ProcessInfo.processInfo.environment
+        environment["WIKI_AUTOMATION_NUDGE_DETAILS_PATH"] = TaskForgeStore.nudgeFeedbackURL.path
+        process.environment = environment
+        do {
+            try process.run()
+        } catch {
+            NSSound.beep()
+            showMessage(title: "Could not open nudge feedback", message: error.localizedDescription)
+        }
     }
 
     private func startSession(_ config: FocusConfig) -> Bool {

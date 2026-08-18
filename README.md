@@ -81,6 +81,12 @@ workflow. A task chosen for now is saved with `[status:: In Progress]`; a task
 deferred until later is validated and written to the recommended existing
 TaskForge list or `inbox.md`.
 
+`Edit Latest Nudge Feedback…` opens Wiki Automation's latest private nudge
+feedback note in Obsidian through the Wiki Automation helper. The item remains
+disabled until a nudge has created the ignored local note under
+`99_meta/system/task/scheduler/nudges/`. After the edited note has been stable
+for a few seconds, its feedback is applied to later nudges.
+
 The status item can show a progress ring, task name, and remaining time.
 `Refresh State` (`Cmd+R`) resynchronizes it with Flow. `Pause Flow Session`,
 `Reset Flow Cycle`, and `Reset Menu Countdown` control the timer or local

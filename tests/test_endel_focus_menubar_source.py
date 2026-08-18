@@ -52,6 +52,13 @@ class TaskPickerInteractionRegressionTests(unittest.TestCase):
         self.assertIn('URLQueryItem(name: "filepath", value: relativePath)', self.source)
         self.assertIn('URLQueryItem(name: "line", value: String(task.lineNumber))', self.source)
 
+    def test_menu_opens_latest_nudge_feedback_in_obsidian(self) -> None:
+        self.assertIn('title: "Edit Latest Nudge Feedback…"', self.source)
+        self.assertIn("#selector(openLatestNudgeFeedback)", self.source)
+        self.assertIn("feedbackItem.isEnabled = FileManager.default.fileExists", self.source)
+        self.assertIn('process.arguments = ["open-latest-nudge"]', self.source)
+        self.assertIn('environment["WIKI_AUTOMATION_NUDGE_DETAILS_PATH"]', self.source)
+
 
 class AccessibilityInstructionRegressionTests(unittest.TestCase):
     @classmethod
