@@ -19,3 +19,10 @@ Current behavior:
 - `Ctrl+Option+Command+F` opens the picker when idle; when a session is assigned, it pauses Flow and opens the menu-bar menu.
 
 `build_app.sh` now rebuilds, signs, kills the old menu-bar instance, and launches the rebuilt app automatically.
+
+## Task-state and presentation contract
+
+See [Task state and readable output](docs/task-state-and-readable-output.md) for
+the optional retrospective-status UI requirements, timer/task-state distinction,
+canonical-identity rules, and machine-metadata display boundary. These are
+documented requirements; new status/date controls are not yet implemented.
